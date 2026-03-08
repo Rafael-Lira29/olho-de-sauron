@@ -1,15 +1,20 @@
 import os
 import streamlit as st
 
-#A VACINA (INSTALAÇÃO AUTOMÁTICA NA NUVEM) ---
+# A VACINA (EXECUTADA ANTES DE TUDO) ---
+# Este bloco garante que o navegador Chromium exista no servidor Linux
 @st.cache_resource
-def instalar_navegador():
-    # Este comando baixa os binários do Chromium para o servidor Linux do Streamlit
-    os.system("playwright install chromium")
+def preparar_ambiente():
+    try:
+        os.system("playwright install chromium")
+        return True
+    except Exception as e:
+        st.error(f"Erro na instalação do navegador: {e}")
+        return False
 
-instalar_navegador()
-# ---------------------------------------------------------
+preparar_ambiente()
 
+# AGORA SIM OS IMPORTS (Eles só rodam após a vacina acima)
 import pandas as pd
 import requests
 from playwright.sync_api import sync_playwright
@@ -19,19 +24,19 @@ import random
 from sqlalchemy import create_engine
 import urllib.parse
 
-# CONFIGURAÇÃO DA PÁGINA
+# --- CONFIGURAÇÃO DA INTERFACE ---
 st.set_page_config(page_title="Olho de Sauron - Tome Leve", layout="wide")
 st.title("👁️ O Olho de Sauron")
 st.markdown("### Inteligência Competitiva Tome Leve")
 
-# SEGURANÇA: URL DO BANCO (Vinda dos Secrets do Streamlit)
+# SEGURANÇA: URL do Banco (Vinda dos Secrets)
 try:
     URL_DO_BANCO = st.secrets["database"]["url"]
 except:
     URL_DO_BANCO = None
     st.sidebar.warning("⚠️ Configuração de banco de dados não encontrada.")
 
-# MOTOR DE BUSCA (API)
+# --- MOTOR DE BUSCA (API) ---
 def buscar_vtex_api(termo):
     try:
         url = "https://www.savegnago.com.br/api/catalog_system/pub/products/search"
@@ -43,7 +48,7 @@ def buscar_vtex_api(termo):
     except: return None
     return None
 
-# INTERFACE
+# --- INTERFACE DE USUÁRIO ---
 arquivo_upload = st.file_uploader("Carregar Planilha de Alvos (.xlsx)", type=["xlsx"])
 
 if arquivo_upload:
@@ -56,6 +61,7 @@ if arquivo_upload:
         resultados = []
         
         with sync_playwright() as p:
+            # Headless=True é obrigatório na nuvem
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             
@@ -66,7 +72,7 @@ if arquivo_upload:
                 
                 status.text(f"🔍 Auditando: {nome_int}")
                 
-                # Tenta API primeiro
+                # Tenta API primeiro (mais rápido)
                 res = buscar_vtex_api(termo)
                 
                 if res:
@@ -88,9 +94,9 @@ if arquivo_upload:
         if resultados:
             df_final = pd.DataFrame(resultados)
             st.success("✅ Auditoria finalizada!")
-            st.dataframe(df_final)
+            st.dataframe(df_final, use_container_width=True)
 
-            # Gravação no Neon
+            # Gravação no Banco Neon
             if URL_DO_BANCO:
                 try:
                     engine = create_engine(URL_DO_BANCO)
