@@ -1,0 +1,8 @@
+streamlit
+pandas
+playwright
+sqlalchemy
+psycopg2-binary
+requests
+openpyxl
+xlsxwriter
