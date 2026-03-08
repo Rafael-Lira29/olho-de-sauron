@@ -1,103 +1,100 @@
+import os
 import streamlit as st
+
+#A VACINA (INSTALAÇÃO AUTOMÁTICA NA NUVEM) ---
+@st.cache_resource
+def instalar_navegador():
+    # Este comando baixa os binários do Chromium para o servidor Linux do Streamlit
+    os.system("playwright install chromium")
+
+instalar_navegador()
+# ---------------------------------------------------------
+
 import pandas as pd
+import requests
 from playwright.sync_api import sync_playwright
 from datetime import datetime
 import time
 import random
 from sqlalchemy import create_engine
 import urllib.parse
-import requests
 
-# -----------------------------
 # CONFIGURAÇÃO DA PÁGINA
-# -----------------------------
-st.set_page_config(page_title="Olho de Sauron - Inteligência Tome Leve", layout="wide")
-
+st.set_page_config(page_title="Olho de Sauron - Tome Leve", layout="wide")
 st.title("👁️ O Olho de Sauron")
-st.subheader("Módulo de Auditoria de Preços - Tome Leve vs Concorrentes")
+st.markdown("### Inteligência Competitiva Tome Leve")
 
-# Barra Lateral
-st.sidebar.header("Configurações da Missão")
-concorrente_selecionado = st.sidebar.selectbox("Selecionar Concorrente", ["Savegnago", "Pão de Açúcar (Em breve)", "Carrefour (Em breve)"])
-url_banco = st.sidebar.text_input("Link do Cofre Neon", type="password")
+# SEGURANÇA: URL DO BANCO (Vinda dos Secrets do Streamlit)
+try:
+    URL_DO_BANCO = st.secrets["database"]["url"]
+except:
+    URL_DO_BANCO = None
+    st.sidebar.warning("⚠️ Configuração de banco de dados não encontrada.")
 
-# -----------------------------
-# MOTOR DE BUSCA (A LÓGICA QUE CRIAMOS)
-# -----------------------------
-def buscar_vtex_v4(termo):
+# MOTOR DE BUSCA (API)
+def buscar_vtex_api(termo):
     try:
-        url = f"https://www.savegnago.com.br/api/catalog_system/pub/products/search"
-        r = requests.get(url, params={"ft": termo}, timeout=10)
+        url = "https://www.savegnago.com.br/api/catalog_system/pub/products/search"
+        headers = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, params={"ft": termo}, headers=headers, timeout=10)
         if r.status_code == 200 and r.json():
             prod = r.json()[0]
             return prod["productName"], float(prod["items"][0]["sellers"][0]["commertialOffer"]["Price"])
     except: return None
     return None
 
-# -----------------------------
-# INTERFACE DE USUÁRIO
-# -----------------------------
-arquivo_upload = st.file_uploader("Carregar Planilha de Alvos (Excel)", type=["xlsx"])
+# INTERFACE
+arquivo_upload = st.file_uploader("Carregar Planilha de Alvos (.xlsx)", type=["xlsx"])
 
 if arquivo_upload:
     df_alvos = pd.read_excel(arquivo_upload)
-    st.write("📋 Lista de produtos carregada:")
-    st.dataframe(df_alvos.head())
+    st.write(f"📊 {len(df_alvos)} produtos prontos para auditoria.")
 
-    if st.button("🚀 INICIAR VARREDURA AGORA"):
-        progresso = st.progress(0)
-        status_text = st.empty()
+    if st.button("🚀 INICIAR VARREDURA"):
+        barra = st.progress(0)
+        status = st.empty()
         resultados = []
         
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             
-            total = len(df_alvos)
             for i, row in df_alvos.iterrows():
-                nome_interno = str(row["Descricao_Tome_Leve"])
+                nome_int = str(row["Descricao_Tome_Leve"])
                 termo = str(row["Busca_Otimizada"])
                 ean = str(row["EAN"])
                 
-                status_text.text(f"🎯 Caçando: {nome_interno}...")
+                status.text(f"🔍 Auditando: {nome_int}")
                 
-                # A INTELIGÊNCIA HÍBRIDA
-                res = buscar_vtex_v4(termo)
+                # Tenta API primeiro
+                res = buscar_vtex_api(termo)
                 
                 if res:
                     nome_conc, preco = res
                     resultados.append({
-                        "Concorrente": concorrente_selecionado, # A IDENTIDADE QUE FALTAVA
+                        "Concorrente": "Savegnago",
                         "EAN": ean,
-                        "Produto Tome Leve": nome_interno,
+                        "Produto Tome Leve": nome_int,
                         "Produto Concorrente": nome_conc,
                         "Preço Atual": preco,
                         "Data_Hora": datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                     })
                 
-                # Atualiza Barra de Progresso
-                progresso.progress((i + 1) / total)
-                time.sleep(random.uniform(1, 3))
+                barra.progress((i + 1) / len(df_alvos))
+                time.sleep(random.uniform(1, 2))
             
             browser.close()
 
-        # -----------------------------
-        # EXIBIÇÃO DOS RESULTADOS
-        # -----------------------------
         if resultados:
             df_final = pd.DataFrame(resultados)
-            st.success(f"✅ Missão cumprida! {len(df_final)} produtos auditados no {concorrente_selecionado}.")
-            st.table(df_final)
+            st.success("✅ Auditoria finalizada!")
+            st.dataframe(df_final)
 
-            # Botão para Download
-            csv = df_final.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Baixar Relatório Completo (CSV)", data=csv, file_name=f"Auditoria_{concorrente_selecionado}.csv")
-
-            # Envio Automático para o Banco se a URL existir
-            if url_banco:
+            # Gravação no Neon
+            if URL_DO_BANCO:
                 try:
-                    engine = create_engine(url_banco)
+                    engine = create_engine(URL_DO_BANCO)
                     df_final.to_sql("auditoria_precos_concorrencia", engine, if_exists="append", index=False)
-                    st.info("🔐 Dados guardados automaticamente no cofre Neon.")
+                    st.toast("Dados sincronizados com o Neon!", icon="🔐")
                 except Exception as e:
-                    st.error(f"🚨 Falha ao aceder ao cofre: {e}")
+                    st.error(f"Erro ao salvar no banco: {e}")
