@@ -3,144 +3,127 @@ import pandas as pd
 import requests
 from datetime import datetime
 from sqlalchemy import create_engine
-from concurrent.futures import ThreadPoolExecutor
 import time
+import random
 
 # ---------------------------------------------------
-# CONFIGURAÇÃO DO APP
+# CONFIGURAÇÃO DE SEGURANÇA (SECRETISMO)
 # ---------------------------------------------------
 st.set_page_config(page_title="Olho de Sauron", layout="wide")
 
-st.title("👁️ Olho de Sauron")
-st.subheader("Radar de Inteligência Competitiva - Tome Leve")
-
-# Tenta carregar a URL dos Secrets por segurança, mas mantém o input manual como fallback
+# O código agora busca a senha diretamente dos Secrets do Streamlit
 try:
-    url_padrao = st.secrets["database"]["url"]
+    URL_DO_BANCO = st.secrets["database"]["url"]
 except:
-    url_padrao = ""
+    URL_DO_BANCO = None
+
+st.title("👁️ Olho de Sauron")
+st.markdown("### Monitoramento de Preços em Tempo Real")
 
 with st.sidebar:
-    st.header("Configurações")
-    concorrente = st.selectbox("Concorrente Alvo", ["Savegnago"])
-    url_banco = st.text_input("URL Banco PostgreSQL", value=url_padrao, type="password")
-    max_threads = st.slider("Velocidade (Threads)", 1, 10, 5)
-
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    st.image("https://cdn-icons-png.flaticon.com/512/1067/1067555.png", width=80)
+    st.header("Painel de Controle")
+    concorrente = st.selectbox("Alvo", ["Savegnago"])
+    if URL_DO_BANCO:
+        st.success("🔐 Conexão com o Neon: Ativa")
+    else:
+        st.error("🚨 Cofre Neon não configurado!")
 
 # ---------------------------------------------------
-# FUNÇÕES DE APOIO
+# MOTOR DE BUSCA (ESTABILIZADO)
 # ---------------------------------------------------
-def buscar_preco(termo):
+def buscar_preco_vtex(termo):
     url = "https://www.savegnago.com.br/api/catalog_system/pub/products/search"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
-        r = requests.get(url, params={"ft": termo}, headers=HEADERS, timeout=10)
+        r = requests.get(url, params={"ft": termo}, headers=headers, timeout=10)
         if r.status_code == 200 and r.json():
-            prod = r.json()[0]
-            nome = prod.get("productName")
-            preco = prod["items"][0]["sellers"][0]["commertialOffer"]["Price"]
+            item = r.json()[0]
+            nome = item.get("productName")
+            preco = item["items"][0]["sellers"][0]["commertialOffer"]["Price"]
             return nome, float(preco)
     except:
         return None
     return None
 
-def detectar_promocao(v):
-    if v is None: return "Novo Produto"
-    if v <= -8: return "🚨 Promoção Agressiva"
-    if v <= -3: return "⚠️ Preço em Queda"
-    if v >= 8: return "📈 Aumento de Preço"
-    return "Normal"
-
-def buscar_preco_anterior(engine, ean):
-    if not engine: return None
-    try:
-        # Nota: Ajustei o nome da tabela para o que usamos anteriormente
-        query = f"SELECT \"Preco_Atual\" FROM auditoria_precos_concorrencia WHERE \"EAN\" = '{ean}' ORDER BY \"Data_Coleta\" DESC LIMIT 1"
-        with engine.connect() as conn:
-            df = pd.read_sql(query, conn)
-            return float(df.iloc[0]["Preco_Atual"]) if not df.empty else None
-    except:
-        return None
-
 # ---------------------------------------------------
-# PROCESSAMENTO OTIMIZADO
+# LOGICA DE COMPARAÇÃO
 # ---------------------------------------------------
-def processar_linha(row, engine):
-    termo = str(row["Busca_Otimizada"])
-    ean = str(row["EAN"])
-    nome_tl = str(row["Descricao_Tome_Leve"])
-
-    res = buscar_preco(termo)
-    if not res: return None
-
-    nome_conc, preco_atual = res
-    preco_antigo = buscar_preco_anterior(engine, ean)
+def analisar_status(preco_novo, preco_antigo):
+    if not preco_antigo: return "Novo", "Normal"
+    variacao = round(((preco_novo - preco_antigo) / preco_antigo) * 100, 2)
     
-    variacao = None
-    if preco_antigo:
-        variacao = round(((preco_atual - preco_antigo) / preco_antigo) * 100, 2)
-
-    return {
-        "Concorrente": concorrente,
-        "EAN": ean,
-        "Produto_TL": nome_tl,
-        "Produto_Conc": nome_conc,
-        "Preco_Atual": preco_atual,
-        "Preco_Anterior": preco_antigo,
-        "Variacao_%": variacao,
-        "Status": detectar_promocao(variacao),
-        "Data_Coleta": datetime.now()
-    }
+    if variacao <= -8: return variacao, "🚨 Promoção Agressiva"
+    if variacao <= -3: return variacao, "⚠️ Preço em Queda"
+    if variacao >= 8: return variacao, "📈 Aumento de Preço"
+    return variacao, "Normal"
 
 # ---------------------------------------------------
-# INTERFACE PRINCIPAL
+# INTERFACE E EXECUÇÃO
 # ---------------------------------------------------
-arquivo = st.file_uploader("Carregar planilha de produtos (.xlsx)", type=["xlsx"])
+arquivo = st.file_uploader("Carregar Planilha de Alvos (.xlsx)", type=["xlsx"])
 
 if arquivo:
     df_alvos = pd.read_excel(arquivo)
-    st.success(f"{len(df_alvos)} produtos prontos para análise.")
+    st.info(f"Carga pronta: {len(df_alvos)} itens identificados.")
 
-    if st.button("🚀 Iniciar Varredura de Mercado"):
+    if st.button("🚀 INICIAR VARREDURA"):
         resultados = []
-        progresso = st.progress(0)
+        barra = st.progress(0)
+        info_status = st.empty()
         
-        # Criamos o engine UMA VEZ fora da thread para eficiência
-        engine = None
-        if url_banco:
-            try: engine = create_engine(url_banco)
-            except: st.error("Erro ao conectar ao Banco de Dados.")
+        # Conexão única com o banco para evitar travamentos
+        engine = create_engine(URL_DO_BANCO) if URL_DO_BANCO else None
 
-        with ThreadPoolExecutor(max_workers=max_threads) as executor:
-            # Passamos o engine para as threads usarem a mesma base de conexão
-            futures = [executor.submit(processar_linha, row, engine) for _, row in df_alvos.iterrows()]
+        # Loop Sequencial Robusto (Evita bloqueios de IP e travamentos de UI)
+        for i, row in df_alvos.iterrows():
+            nome_tl = str(row["Descricao_Tome_Leve"])
+            termo = str(row["Busca_Otimizada"])
+            ean = str(row["EAN"])
             
-            for i, future in enumerate(futures):
-                res = future.result()
-                if res: resultados.append(res)
-                progresso.progress((i + 1) / len(df_alvos))
+            info_status.text(f"🔍 Analisando: {nome_tl}...")
+            
+            res = buscar_preco_vtex(termo)
+            
+            if res:
+                nome_conc, preco_atual = res
+                
+                # Busca preço anterior se o banco estiver ativo
+                preco_ant = None
+                if engine:
+                    try:
+                        query = f"SELECT \"Preco_Atual\" FROM auditoria_precos_concorrencia WHERE \"EAN\" = '{ean}' ORDER BY \"Data_Coleta\" DESC LIMIT 1"
+                        df_ant = pd.read_sql(query, engine)
+                        if not df_ant.empty: preco_ant = float(df_ant.iloc[0][0])
+                    except: pass
+                
+                var, status_msg = analisar_status(preco_atual, preco_ant)
+                
+                resultados.append({
+                    "Concorrente": concorrente,
+                    "EAN": ean,
+                    "Produto Tome Leve": nome_tl,
+                    "Produto Concorrente": nome_conc,
+                    "Preço Atual": preco_atual,
+                    "Preço Anterior": preco_ant,
+                    "Variação %": var,
+                    "Status": status_msg,
+                    "Data_Coleta": datetime.now()
+                })
+            
+            # Atualiza interface
+            barra.progress((i + 1) / len(df_alvos))
+            time.sleep(random.uniform(0.5, 1.5)) # Pausa humana para não ser bloqueado
 
         if resultados:
             df_final = pd.DataFrame(resultados)
-            st.divider()
-            st.subheader("📊 Resultados da Auditoria")
+            st.success("✅ Auditoria Concluída!")
             st.dataframe(df_final, use_container_width=True)
 
-            # Dashboard Rápido
-            col1, col2 = st.columns(2)
-            with col1:
-                promos = df_final[df_final["Status"] == "🚨 Promoção Agressiva"]
-                if not promos.empty:
-                    st.error(f"⚠️ Detectamos {len(promos)} promoções agressivas!")
-                    st.dataframe(promos[["Produto_TL", "Preco_Atual", "Variacao_%"]])
-            
-            # Exportação e Gravação
-            csv = df_final.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Baixar Relatório CSV", csv, "auditoria.csv")
-
+            # Gravação em lote (Muito mais rápido e seguro)
             if engine:
                 try:
                     df_final.to_sql("auditoria_precos_concorrencia", engine, if_exists="append", index=False)
-                    st.info("💾 Histórico sincronizado com o cofre Neon.")
+                    st.toast("Cofre Neon atualizado!", icon="🔐")
                 except Exception as e:
-                    st.warning(f"Os dados não puderam ser salvos: {e}")
+                    st.error(f"Erro ao salvar: {e}")
