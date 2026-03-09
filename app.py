@@ -129,27 +129,51 @@ if arquivo:
                 st.toast("O Olho está analisando o comportamento do mercado...", icon="👁️")
                 time.sleep(random.uniform(3, 5))
 
-        # --- FINALIZAÇÃO SEGURA (EVITA TRAVAMENTO NO ÚLTIMO ITEM) ---
-        status_msg.success("✨ Processamento concluído. Organizando dados para a Diretoria...")
-        time.sleep(2) # Cooldown de segurança
+        # --- FINALIZAÇÃO SEGURA ---
+        status_msg.success("✨ Varredura Finalizada! A preparar o Dashboard...")
         
-        if resultados:
+        if not resultados:
+            st.error("⚠️ Atenção: O loop terminou, mas a lista de resultados está vazia. Verifique a planilha ou a conexão.")
+        else:
             df_final = pd.DataFrame(resultados)
             
-            # 1. Alerta Sonoro de Sucesso
-            disparar_alerta_sonoro()
+            # --- 1. DASHBOARD DE TOPO (RENDERIZAÇÃO RÁPIDA) ---
+            st.divider()
+            st.subheader("📊 Resumo para a Diretoria")
             
-            # 2. Renderiza Dashboard Executivo
-            renderizar_dashboard(df_final)
-            
-            # 3. Exibe Tabela Completa
-            st.subheader("📋 Relatório Detalhado")
-            st.dataframe(df_final, use_container_width=True)
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.metric("Total Auditado", f"{len(df_final)} itens")
+            with m2:
+                # Conta quantos têm o alerta no status
+                promos = len(df_final[df_final["Status"].str.contains("🚨", na=False)])
+                st.metric("Promoções Ativas", promos)
+            with m3:
+                st.metric("Alvo Principal", "Savegnago")
 
-            # 4. Gravação Final
+            # --- 2. TOP 5 OPORTUNIDADES (USANDO DATAFRAME EM VEZ DE TABLE) ---
+            st.subheader("🎯 Plano de Batalha: Top 5 Oportunidades")
+            # Filtra apenas quem tem variação negativa (preço caiu)
+            df_rank = df_final.sort_values(by="Variação %", ascending=True).head(5)
+            st.dataframe(df_rank[["Produto Tome Leve", "Preço Atual", "Variação %", "Status"]], use_container_width=True)
+
+            # --- 3. RELATÓRIO COMPLETO ---
+            with st.expander("📄 Ver Relatório Detalhado Completo"):
+                st.dataframe(df_final, use_container_width=True)
+
+            # --- 4. EXPORTAÇÃO ---
+            csv = df_final.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Baixar Relatório CSV", csv, "auditoria_tome_leve.csv")
+
+            # --- 5. SINCRONIZAÇÃO COM O COFRE (O QUE PODE ESTAR A TRAVAR) ---
             if engine:
-                try:
-                    df_final.to_sql("auditoria_precos_concorrencia", engine, if_exists="append", index=False)
-                    st.toast("Cofre Neon Sincronizado!", icon="🔐")
-                except Exception as e:
-                    st.error(f"Erro ao salvar: {e}")
+                with st.spinner("🔐 Sincronizando com o Cofre Neon..."):
+                    try:
+                        df_final.to_sql("auditoria_precos_concorrencia", engine, if_exists="append", index=False)
+                        st.toast("Cofre Sincronizado!", icon="✅")
+                    except Exception as e:
+                        st.error(f"Erro ao salvar no banco: {e}")
+
+            # --- 6. ALERTAS FINAIS (SONORO POR ÚLTIMO) ---
+            disparar_alerta_sonoro()
+            st.balloons()
